@@ -3,14 +3,6 @@
 HolidayFunDB – Database Implementation Script
 COMP3350 – Advanced Database
 Section 3 – Database Implementation
-
-Assumptions:
-1. Deposit is 25% of total amount due (as per Section 4 requirement).
-2. A package is treated as an AdvertisedServicePackage.
-3. Individual services are also advertised via AdvertisedServicePackage.
-4. Discounts above 25% require Head Office authorization.
-5. Facility booking is stored separately to track time allocations.
-=============================================================
 */
 
 -- ==========================================================
