@@ -1,42 +1,65 @@
 USE HolidayFunDB;
 GO
 
--- RE-DECLARE TYPES IF THEY ARE NOT FOUND
-IF NOT EXISTS (SELECT * FROM sys.types WHERE name = 'ServicePkgList')
-    CREATE TYPE ServicePkgList AS TABLE (
-        AdvertisedID INT,
-        Quantity INT,
-        StartDate DATE,
-        EndDate DATE
-    );
+/*
+=============================================================
+Test Script for usp_makeReservation
+Tests:
+1. Successful reservation
+2. Capacity failure scenario
+=============================================================
+*/
 
-IF NOT EXISTS (SELECT * FROM sys.types WHERE name = 'GuestListType')
-    CREATE TYPE GuestListType AS TABLE (
-        FullName NVARCHAR(100),
-        Address NVARCHAR(200),
-        Phone NVARCHAR(20),
-        Email NVARCHAR(100)
-    );
-GO
-
--- NOW RUN THE TEST
-DECLARE @NewID INT;
+DECLARE @NewReservationID INT;
 DECLARE @Items ServicePkgList;
 DECLARE @Guests GuestListType;
 
--- TEST CASE 1: Success
-INSERT INTO @Items VALUES (1, 1, '2026-12-01', '2026-12-05');
-INSERT INTO @Guests VALUES ('John Tester', '1 Main St', '0290000000', 'john@test.com');
+/* ==========================================================
+TEST CASE 1 – SUCCESS
+========================================================== */
 
-EXEC usp_makeReservation 
+INSERT INTO @Items VALUES (1, 1, '2026-12-01', '2026-12-05');
+
+INSERT INTO @Guests VALUES 
+('John Guest','1 Main St','0400000000','guest1@test.com'),
+('Mary Guest','2 Main St','0411111111','guest2@test.com');
+
+EXEC usp_makeReservation
     @CustomerName = 'John Tester',
     @Address = '1 Main St',
     @Phone = '0290000000',
     @Email = 'john@test.com',
     @ItemList = @Items,
     @GuestList = @Guests,
-    @ReservationID = @NewID OUTPUT;
+    @ReservationID = @NewReservationID OUTPUT;
 
-SELECT 'New Reservation Created' AS Status, @NewID AS ReservationID;
-SELECT * FROM Reservation WHERE ReservationID = @NewID;
+SELECT 'Reservation Created' AS Status, @NewReservationID AS ReservationID;
+
+SELECT * FROM Reservation WHERE ReservationID = @NewReservationID;
+SELECT * FROM Booking WHERE ReservationID = @NewReservationID;
+
+
+/* ==========================================================
+TEST CASE 2 – FAILURE (Exceed Capacity)
+========================================================== */
+
+DECLARE @FailID INT;
+DECLARE @ItemsFail ServicePkgList;
+
+-- Quantity intentionally exceeds capacity
+INSERT INTO @ItemsFail VALUES (1, 9999, '2026-12-01', '2026-12-05');
+
+BEGIN TRY
+    EXEC usp_makeReservation
+        @CustomerName = 'Fail Case',
+        @Address = 'Fail Address',
+        @Phone = '0000000000',
+        @Email = 'fail@test.com',
+        @ItemList = @ItemsFail,
+        @GuestList = @Guests,
+        @ReservationID = @FailID OUTPUT;
+END TRY
+BEGIN CATCH
+    SELECT ERROR_MESSAGE() AS ErrorMessage;
+END CATCH;
 GO
