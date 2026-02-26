@@ -1,126 +1,205 @@
+/* ============================================================
+   COMP3350 – Assignment 1
+   Section 4 – Stored Procedure
+   Procedure: usp_makeReservation
+   ============================================================ */
+
 USE HolidayFunDB;
 GO
 
-CREATE OR ALTER PROCEDURE usp_makeReservation
-    @CustomerName NVARCHAR(100),
-    @Address NVARCHAR(200),
-    @Phone NVARCHAR(20),
-    @Email NVARCHAR(100),
-    @ItemList ServicePkgList READONLY,
-    @GuestList GuestListType READONLY,
+/* ============================================================
+   1. Create Table-Valued Parameter Type
+   ============================================================ */
+
+IF TYPE_ID('OfferReservationType') IS NOT NULL
+    DROP TYPE OfferReservationType;
+GO
+
+CREATE TYPE OfferReservationType AS TABLE
+(
+    offerID INT,
+    quantity INT,
+    startDate DATE,
+    endDate DATE
+);
+GO
+
+
+/* ============================================================
+   2. Stored Procedure: usp_makeReservation
+   ============================================================ */
+
+IF OBJECT_ID('usp_makeReservation') IS NOT NULL
+    DROP PROCEDURE usp_makeReservation;
+GO
+
+CREATE PROCEDURE usp_makeReservation
+(
+    -- Customer Details
+    @customerName VARCHAR(100),
+    @customerAddress VARCHAR(200),
+    @customerPhone VARCHAR(20),
+    @customerEmail VARCHAR(100),
+
+    -- Reserved Offers
+    @OfferList OfferReservationType READONLY,
+
+    -- Output
     @ReservationID INT OUTPUT
+)
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    DECLARE @CustomerID INT;
-    DECLARE @TotalAmount DECIMAL(10,2);
-    DECLARE @DepositAmount DECIMAL(10,2);
-
     BEGIN TRY
         BEGIN TRANSACTION;
 
-        /* 1. VALIDATE CAPACITY */
-        IF EXISTS (
-            SELECT 1
-            FROM @ItemList I
-            JOIN AdvertisedOffer AO ON I.OfferID = AO.OfferID
-            JOIN AdvertisedOfferServiceItem AOSI ON AO.OfferID = AOSI.OfferID
-            JOIN ServiceItem SI ON AOSI.ServiceID = SI.ServiceID
-            WHERE I.Quantity > SI.Capacity
-        )
-        BEGIN
-            THROW 50001, 
-                'Reservation exceeds available capacity for one or more services. Reservation cancelled.',
-                1;
-        END
+        DECLARE @CustomerID INT;
+        DECLARE @TotalAmount DECIMAL(10,2) = 0;
+        DECLARE @DepositAmount DECIMAL(10,2);
 
-        /* 2. CREATE OR RETRIEVE CUSTOMER */
-        SELECT @CustomerID = CustomerID
+        /* ====================================================
+           1. Check or Insert Customer
+           ==================================================== */
+
+        SELECT @CustomerID = customerID
         FROM Customer
-        WHERE Email = @Email;
+        WHERE email = @customerEmail;
 
         IF @CustomerID IS NULL
         BEGIN
-            INSERT INTO Customer (Name, Address, Phone, Email)
-            VALUES (@CustomerName, @Address, @Phone, @Email);
+            INSERT INTO Customer (name, address, phone, email)
+            VALUES (@customerName, @customerAddress, @customerPhone, @customerEmail);
 
             SET @CustomerID = SCOPE_IDENTITY();
         END
 
-        /* 3. CALCULATE TOTAL & DEPOSIT (25%) */
-        SELECT @TotalAmount = SUM(AO.AdvertisedPrice * I.Quantity)
-        FROM @ItemList I
-        JOIN AdvertisedOffer AO ON I.OfferID = AO.OfferID;
+        /* ====================================================
+           2. Validate Booking Dates
+           ==================================================== */
 
-        SET @DepositAmount = @TotalAmount * 0.25;
+        IF EXISTS (
+            SELECT 1 FROM @OfferList
+            WHERE endDate <= startDate
+        )
+        BEGIN
+            RAISERROR('End date must be after start date.',16,1);
+        END
 
-        /* 4. CREATE RESERVATION */
-        INSERT INTO Reservation (ReservationDate, TotalAmount, DepositAmount, Status)
-        VALUES (GETDATE(), @TotalAmount, @DepositAmount, 'Confirmed');
+        /* ====================================================
+           3. Capacity Check
+           ==================================================== */
 
-        SET @ReservationID = SCOPE_IDENTITY();
+        DECLARE @offerID INT, @quantity INT, @startDate DATE, @endDate DATE;
+        DECLARE offer_cursor CURSOR FOR
+        SELECT offerID, quantity, startDate, endDate
+        FROM @OfferList;
 
-        INSERT INTO CustomerReservation (CustomerID, ReservationID)
-        VALUES (@CustomerID, @ReservationID);
-
-        /* 5. CREATE BOOKINGS */
-        DECLARE @BookingID INT;
-        DECLARE @OfferID INT, @Qty INT, @Start DATE, @End DATE;
-
-        DECLARE item_cursor CURSOR FOR
-        SELECT OfferID, Quantity, StartDate, EndDate
-        FROM @ItemList;
-
-        OPEN item_cursor;
-        FETCH NEXT FROM item_cursor INTO @OfferID, @Qty, @Start, @End;
+        OPEN offer_cursor;
+        FETCH NEXT FROM offer_cursor INTO @offerID, @quantity, @startDate, @endDate;
 
         WHILE @@FETCH_STATUS = 0
         BEGIN
-            INSERT INTO Booking (StartDate, EndDate, Quantity, ReservationID, OfferID)
-            VALUES (@Start, @End, @Qty, @ReservationID, @OfferID);
 
-            SET @BookingID = SCOPE_IDENTITY();
+            DECLARE @Capacity INT;
 
-            /* Assign first available facility */
-            INSERT INTO BookingFacility (BookingID, FacilityID, StartDateTime, EndDateTime)
-            SELECT TOP 1 
-                @BookingID,
-                F.FacilityID,
-                CAST(@Start AS DATETIME),
-                CAST(@End AS DATETIME)
-            FROM Facility F
-            WHERE F.Status = 'Available';
+            SELECT @Capacity = MIN(si.capacity)
+            FROM AdvertisedOfferServiceItem aos
+            JOIN ServiceItem si ON aos.serviceID = si.serviceID
+            WHERE aos.offerID = @offerID;
 
-            /* Add guests - split Name into FirstName / LastName */
-            INSERT INTO Guest (FirstName, LastName, Address, Phone, Email)
-            SELECT 
-                LEFT(Name, CHARINDEX(' ', Name + ' ') - 1),  -- FirstName
-                LTRIM(RIGHT(Name, LEN(Name) - CHARINDEX(' ', Name + ' '))),  -- LastName
-                Address,
-                Phone,
-                Email
-            FROM @GuestList;
+            DECLARE @BookedQty INT;
 
-            INSERT INTO BookingGuest (BookingID, GuestID)
-            SELECT @BookingID, G.GuestID
-            FROM Guest G
-            WHERE G.Email IN (SELECT Email FROM @GuestList);
+            SELECT @BookedQty = ISNULL(SUM(b.quantity),0)
+            FROM Booking b
+            WHERE b.offerID = @offerID
+            AND (
+                b.startDate < @endDate
+                AND b.endDate > @startDate
+            );
 
-            FETCH NEXT FROM item_cursor INTO @OfferID, @Qty, @Start, @End;
+            IF (@BookedQty + @quantity) > @Capacity
+            BEGIN
+                RAISERROR('Capacity exceeded for one or more offers.',16,1);
+            END
+
+            FETCH NEXT FROM offer_cursor INTO @offerID, @quantity, @startDate, @endDate;
         END
 
-        CLOSE item_cursor;
-        DEALLOCATE item_cursor;
+        CLOSE offer_cursor;
+        DEALLOCATE offer_cursor;
+
+        /* ====================================================
+           4. Insert Reservation
+           ==================================================== */
+
+        INSERT INTO Reservation (reservationDate, totalAmount, depositAmount, status, customerID)
+        VALUES (GETDATE(), 0, 0, 'Pending', @CustomerID);
+
+        SET @ReservationID = SCOPE_IDENTITY();
+
+        /* ====================================================
+           5. Insert Bookings and Calculate Total
+           ==================================================== */
+
+        DECLARE booking_cursor CURSOR FOR
+        SELECT offerID, quantity, startDate, endDate
+        FROM @OfferList;
+
+        OPEN booking_cursor;
+        FETCH NEXT FROM booking_cursor INTO @offerID, @quantity, @startDate, @endDate;
+
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+
+            DECLARE @Price DECIMAL(10,2);
+            DECLARE @Days INT;
+
+            SELECT @Price = advertisedPrice
+            FROM AdvertisedOffer
+            WHERE offerID = @offerID
+            AND GETDATE() BETWEEN startDate AND endDate;
+
+            SET @Days = DATEDIFF(DAY, @startDate, @endDate);
+
+            IF @Price IS NULL
+            BEGIN
+                RAISERROR('Offer not valid for current date.',16,1);
+            END
+
+            INSERT INTO Booking (startDate, endDate, quantity, reservationID, offerID)
+            VALUES (@startDate, @endDate, @quantity, @ReservationID, @offerID);
+
+            SET @TotalAmount = @TotalAmount + (@Price * @quantity * @Days);
+
+            FETCH NEXT FROM booking_cursor INTO @offerID, @quantity, @startDate, @endDate;
+        END
+
+        CLOSE booking_cursor;
+        DEALLOCATE booking_cursor;
+
+        /* ====================================================
+           6. Calculate Deposit (25%)
+           ==================================================== */
+
+        SET @DepositAmount = @TotalAmount * 0.25;
+
+        UPDATE Reservation
+        SET totalAmount = @TotalAmount,
+            depositAmount = @DepositAmount,
+            status = 'Confirmed'
+        WHERE reservationID = @ReservationID;
 
         COMMIT TRANSACTION;
 
     END TRY
     BEGIN CATCH
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION;
+        ROLLBACK TRANSACTION;
 
-        THROW;
+        DECLARE @ErrorMessage NVARCHAR(4000);
+        SET @ErrorMessage = ERROR_MESSAGE();
+
+        RAISERROR(@ErrorMessage,16,1);
     END CATCH
-END;
+END
 GO
