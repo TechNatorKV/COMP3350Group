@@ -1,107 +1,155 @@
--- ==========================================================
--- Section 4: Stored Procedures
--- Procedure name: usp_makeReservation
--- ==========================================================
+/*
+=============================================================
+Section 4 – Database Queries & Demonstration
+COMP3350 – Advanced Database
+This script demonstrates data retrieval, joins,
+aggregation, filtering, and business logic queries.
+=============================================================
+*/
+
 USE HolidayFunDB;
 GO
 
--- First, define the Table-Valued Parameters required by the prompt
-IF NOT EXISTS (SELECT * FROM sys.types WHERE name = 'ServicePkgList')
-    CREATE TYPE ServicePkgList AS TABLE (
-        AdvertisedID INT,
-        Quantity INT,
-        StartDate DATE,
-        EndDate DATE
-    );
+/* ==========================================================
+4.1 View All Resorts and Their Facilities
+========================================================== */
+SELECT 
+    R.Name AS ResortName,
+    F.Name AS FacilityName,
+    FT.Name AS FacilityType,
+    F.Status
+FROM Resort R
+JOIN Facility F ON R.ResortID = F.ResortID
+JOIN FacilityType FT ON F.FacilityTypeID = FT.FacilityTypeID
+ORDER BY R.Name;
+
 GO
 
-IF NOT EXISTS (SELECT * FROM sys.types WHERE name = 'GuestListType')
-    CREATE TYPE GuestListType AS TABLE (
-        FullName NVARCHAR(100),
-        Address NVARCHAR(200),
-        Phone NVARCHAR(20),
-        Email NVARCHAR(100)
-    );
+/* ==========================================================
+4.2 List All Services Included in an Advertised Offer
+========================================================== */
+SELECT 
+    AO.Name AS OfferName,
+    SI.Name AS ServiceName,
+    SI.BaseCost,
+    SI.BaseCurrency
+FROM AdvertisedOffer AO
+JOIN AdvertisedOfferServiceItem AOSI 
+    ON AO.OfferID = AOSI.OfferID
+JOIN ServiceItem SI 
+    ON AOSI.ServiceID = SI.ServiceID
+ORDER BY AO.Name;
+
 GO
 
-CREATE OR ALTER PROCEDURE usp_makeReservation
-    @CustomerName NVARCHAR(100),
-    @Address NVARCHAR(200),
-    @Phone NVARCHAR(20),
-    @Email NVARCHAR(100),
-    @ItemList ServicePkgList READONLY,
-    @GuestList GuestListType READONLY,
-    @ReservationID INT OUTPUT
-AS
-BEGIN
-    SET NOCOUNT ON;
-    
-    DECLARE @TotalAmount DECIMAL(10,2) = 0;
-    DECLARE @DepositAmount DECIMAL(10,2) = 0;
-    DECLARE @CustomerID INT;
+/* ==========================================================
+4.3 Show Reservations with Customer Details
+========================================================== */
+SELECT 
+    C.Name AS CustomerName,
+    R.ReservationID,
+    R.ReservationDate,
+    R.TotalAmount,
+    R.Status
+FROM Customer C
+JOIN CustomerReservation CR 
+    ON C.CustomerID = CR.CustomerID
+JOIN Reservation R 
+    ON CR.ReservationID = R.ReservationID
+ORDER BY R.ReservationDate DESC;
 
-    BEGIN TRY
-        BEGIN TRANSACTION;
+GO
 
-        -- 1. Capacity Check Logic
-        -- Ensure reservation does not exceed available capacity (Section 4 Functional Requirement)
-        IF EXISTS (
-            SELECT 1 
-            FROM @ItemList il
-            JOIN AdvertisedServicePackage asp ON il.AdvertisedID = asp.AdvertisedID
-            JOIN PackageService ps ON asp.AdvertisedID = ps.AdvertisedID
-            JOIN ServiceItem si ON ps.ServiceID = si.ServiceID
-            WHERE il.Quantity > si.Capacity
-        )
-        BEGIN
-            -- Raised error as per Section 4 requirement
-            RAISERROR('Insufficient capacity available for one or more services. Reservation cancelled.', 16, 1);
-        END
+/* ==========================================================
+4.4 Total Revenue from Completed Reservations
+========================================================== */
+SELECT 
+    SUM(TotalAmount) AS TotalRevenue
+FROM Reservation
+WHERE Status = 'Completed';
 
-        -- 2. Customer Management
-        -- Check if customer exists, otherwise insert
-        SELECT @CustomerID = CustomerID FROM Customer WHERE Email = @Email;
-        IF @CustomerID IS NULL
-        BEGIN
-            INSERT INTO Customer (FullName, Address, Phone, Email)
-            VALUES (@CustomerName, @Address, @Phone, @Email);
-            SET @CustomerID = SCOPE_IDENTITY();
-        END
+GO
 
-        -- 3. Calculate Amounts
-        -- Calculate Total and Deposit (25% as per Section 4 requirement)
-        SELECT @TotalAmount = SUM(asp.AdvertisedPrice * il.Quantity)
-        FROM @ItemList il
-        JOIN AdvertisedServicePackage asp ON il.AdvertisedID = asp.AdvertisedID;
+/* ==========================================================
+4.5 Total Additional Charges Per Booking
+========================================================== */
+SELECT 
+    B.BookingID,
+    SUM(C.Amount) AS TotalCharges
+FROM Booking B
+JOIN BookingCharge BC 
+    ON B.BookingID = BC.BookingID
+JOIN Charge C 
+    ON BC.ChargeID = C.ChargeID
+GROUP BY B.BookingID;
 
-        SET @DepositAmount = @TotalAmount * 0.25;
+GO
 
-        -- 4. Save Valid Reservation
-        INSERT INTO Reservation (CustomerID, TotalAmount, DepositAmount, Status, ReservationDate)
-        VALUES (@CustomerID, @TotalAmount, @DepositAmount, 'Confirmed', GETDATE());
-        
-        SET @ReservationID = SCOPE_IDENTITY();
+/* ==========================================================
+4.6 Guests Assigned to Each Booking
+========================================================== */
+SELECT 
+    B.BookingID,
+    G.Name AS GuestName
+FROM Booking B
+JOIN BookingGuest BG 
+    ON B.BookingID = BG.BookingID
+JOIN Guest G 
+    ON BG.GuestID = G.GuestID
+ORDER BY B.BookingID;
 
-        -- 5. Save Bookings of Facilities
-        INSERT INTO ReservationDetail (ReservationID, AdvertisedID, Quantity, StartDate, EndDate)
-        SELECT @ReservationID, AdvertisedID, Quantity, StartDate, EndDate 
-        FROM @ItemList;
+GO
 
-        -- Link to a facility (Simple assignment logic for demonstration)
-        INSERT INTO FacilityBooking (ReservationDetailID, FacilityID, StartDateTime, EndDateTime)
-        SELECT 
-            rd.ReservationDetailID, 
-            (SELECT TOP 1 FacilityID FROM Facility WHERE Status = 'Available'), 
-            CAST(rd.StartDate AS DATETIME), 
-            CAST(rd.EndDate AS DATETIME)
-        FROM ReservationDetail rd
-        WHERE rd.ReservationID = @ReservationID;
+/* ==========================================================
+4.7 Employees Who Authorised Offers
+========================================================== */
+SELECT 
+    E.Name AS EmployeeName,
+    AO.Name AS OfferName
+FROM Employee E
+JOIN Authorises A 
+    ON E.EmployeeID = A.EmployeeID
+JOIN AdvertisedOffer AO 
+    ON A.OfferID = AO.OfferID;
 
-        COMMIT TRANSACTION;
-    END TRY
-    BEGIN CATCH
-        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
-        THROW; -- Re-raise the error to the calling test script
-    END CATCH
-END;
+GO
+
+/* ==========================================================
+4.8 Facilities Booked Within 2026
+========================================================== */
+SELECT 
+    F.Name AS FacilityName,
+    BF.StartDateTime,
+    BF.EndDateTime
+FROM BookingFacility BF
+JOIN Facility F 
+    ON BF.FacilityID = F.FacilityID
+WHERE BF.StartDateTime BETWEEN '2026-01-01' AND '2026-12-31';
+
+GO
+
+/* ==========================================================
+4.9 Offers Expiring Within 30 Days
+========================================================== */
+SELECT 
+    Name,
+    EndDate
+FROM AdvertisedOffer
+WHERE EndDate <= DATEADD(DAY, 30, GETDATE());
+
+GO
+
+/* ==========================================================
+4.10 Total Payments Per Reservation
+========================================================== */
+SELECT 
+    R.ReservationID,
+    SUM(P.Amount) AS TotalPaid
+FROM Reservation R
+JOIN ReservationPayment RP 
+    ON R.ReservationID = RP.ReservationID
+JOIN Payment P 
+    ON RP.PaymentID = P.PaymentID
+GROUP BY R.ReservationID;
+
 GO
