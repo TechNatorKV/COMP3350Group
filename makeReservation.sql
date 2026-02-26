@@ -1,45 +1,6 @@
 USE HolidayFunDB;
 GO
 
-/*
-=============================================================
-Procedure: usp_makeReservation
-Function: Creates a reservation with validation.
-- Validates service capacity
-- Calculates total and 25% deposit
-- Creates reservation + booking
-- Assigns facility
-- Adds guests
-- Rolls back fully if error occurs
-=============================================================
-*/
-
--- ==========================================================
--- TABLE TYPES
--- ==========================================================
-
-IF NOT EXISTS (SELECT * FROM sys.types WHERE name = 'ServicePkgList')
-CREATE TYPE ServicePkgList AS TABLE (
-    OfferID INT,
-    Quantity INT,
-    StartDate DATE,
-    EndDate DATE
-);
-GO
-
-IF NOT EXISTS (SELECT * FROM sys.types WHERE name = 'GuestListType')
-CREATE TYPE GuestListType AS TABLE (
-    Name NVARCHAR(100),
-    Address NVARCHAR(200),
-    Phone NVARCHAR(20),
-    Email NVARCHAR(100)
-);
-GO
-
--- ==========================================================
--- STORED PROCEDURE
--- ==========================================================
-
 CREATE OR ALTER PROCEDURE usp_makeReservation
     @CustomerName NVARCHAR(100),
     @Address NVARCHAR(200),
@@ -59,11 +20,7 @@ BEGIN
     BEGIN TRY
         BEGIN TRANSACTION;
 
-        /* =====================================================
-           1. VALIDATE CAPACITY
-           Ensure quantity does not exceed facility capacity
-        ===================================================== */
-
+        /* 1. VALIDATE CAPACITY */
         IF EXISTS (
             SELECT 1
             FROM @ItemList I
@@ -74,16 +31,13 @@ BEGIN
         )
         BEGIN
             THROW 50001, 
-            'Reservation exceeds available capacity for one or more services. Reservation cancelled.',
-            1;
+                'Reservation exceeds available capacity for one or more services. Reservation cancelled.',
+                1;
         END
 
-        /* =====================================================
-           2. CREATE OR RETRIEVE CUSTOMER
-        ===================================================== */
-
-        SELECT @CustomerID = CustomerID 
-        FROM Customer 
+        /* 2. CREATE OR RETRIEVE CUSTOMER */
+        SELECT @CustomerID = CustomerID
+        FROM Customer
         WHERE Email = @Email;
 
         IF @CustomerID IS NULL
@@ -94,20 +48,14 @@ BEGIN
             SET @CustomerID = SCOPE_IDENTITY();
         END
 
-        /* =====================================================
-           3. CALCULATE TOTAL & DEPOSIT (25%)
-        ===================================================== */
-
+        /* 3. CALCULATE TOTAL & DEPOSIT (25%) */
         SELECT @TotalAmount = SUM(AO.AdvertisedPrice * I.Quantity)
         FROM @ItemList I
         JOIN AdvertisedOffer AO ON I.OfferID = AO.OfferID;
 
         SET @DepositAmount = @TotalAmount * 0.25;
 
-        /* =====================================================
-           4. CREATE RESERVATION
-        ===================================================== */
-
+        /* 4. CREATE RESERVATION */
         INSERT INTO Reservation (ReservationDate, TotalAmount, DepositAmount, Status)
         VALUES (GETDATE(), @TotalAmount, @DepositAmount, 'Confirmed');
 
@@ -116,17 +64,13 @@ BEGIN
         INSERT INTO CustomerReservation (CustomerID, ReservationID)
         VALUES (@CustomerID, @ReservationID);
 
-        /* =====================================================
-           5. CREATE BOOKINGS
-        ===================================================== */
-
+        /* 5. CREATE BOOKINGS */
         DECLARE @BookingID INT;
+        DECLARE @OfferID INT, @Qty INT, @Start DATE, @End DATE;
 
         DECLARE item_cursor CURSOR FOR
         SELECT OfferID, Quantity, StartDate, EndDate
         FROM @ItemList;
-
-        DECLARE @OfferID INT, @Qty INT, @Start DATE, @End DATE;
 
         OPEN item_cursor;
         FETCH NEXT FROM item_cursor INTO @OfferID, @Qty, @Start, @End;
@@ -148,9 +92,14 @@ BEGIN
             FROM Facility F
             WHERE F.Status = 'Available';
 
-            /* Add guests */
-            INSERT INTO Guest (Name, Address, Phone, Email)
-            SELECT Name, Address, Phone, Email
+            /* Add guests - split Name into FirstName / LastName */
+            INSERT INTO Guest (FirstName, LastName, Address, Phone, Email)
+            SELECT 
+                LEFT(Name, CHARINDEX(' ', Name + ' ') - 1),  -- FirstName
+                LTRIM(RIGHT(Name, LEN(Name) - CHARINDEX(' ', Name + ' '))),  -- LastName
+                Address,
+                Phone,
+                Email
             FROM @GuestList;
 
             INSERT INTO BookingGuest (BookingID, GuestID)
