@@ -3,6 +3,7 @@
 HolidayFunDB – Database Implementation Script
 COMP3350 – Advanced Database
 Section 3 – Database Implementation
+=============================================================
 */
 
 -- ==========================================================
@@ -14,22 +15,16 @@ GO
 USE HolidayFunDB;
 GO
 
--- ==========================================================
--- EMPLOYEE TABLE
--- ==========================================================
-CREATE TABLE Employee (
-    EmployeeID INT IDENTITY PRIMARY KEY,
-    FullName NVARCHAR(100) NOT NULL,
-    Role NVARCHAR(50) NOT NULL CHECK (Role IN ('Manager','FrontOffice','HeadOffice')),
-    Email NVARCHAR(100) UNIQUE
-);
+/* ==========================================================
+   1. CORE ENTITY TABLES
+========================================================== */
 
--- ==========================================================
+-- ----------------------------------------------------------
 -- RESORT
--- ==========================================================
+-- ----------------------------------------------------------
 CREATE TABLE Resort (
     ResortID INT IDENTITY PRIMARY KEY,
-    Name NVARCHAR(100) NOT NULL UNIQUE,
+    Name NVARCHAR(100) NOT NULL,
     Address NVARCHAR(200) NOT NULL,
     Country NVARCHAR(50) NOT NULL,
     Phone NVARCHAR(20),
@@ -37,241 +32,343 @@ CREATE TABLE Resort (
     Description NVARCHAR(500)
 );
 
--- ==========================================================
--- FACILITY TYPES
--- ==========================================================
+-- ----------------------------------------------------------
+-- FACILITY TYPE
+-- ----------------------------------------------------------
 CREATE TABLE FacilityType (
     FacilityTypeID INT IDENTITY PRIMARY KEY,
-    Name NVARCHAR(50) NOT NULL UNIQUE,
-    Description NVARCHAR(200),
+    Name NVARCHAR(100) NOT NULL,
+    Description NVARCHAR(300),
     Capacity INT NOT NULL CHECK (Capacity > 0)
 );
 
--- ==========================================================
--- FACILITIES
--- ==========================================================
+-- ----------------------------------------------------------
+-- FACILITY
+-- ----------------------------------------------------------
 CREATE TABLE Facility (
     FacilityID INT IDENTITY PRIMARY KEY,
-    ResortID INT NOT NULL,
-    FacilityTypeID INT NOT NULL,
-    Name NVARCHAR(100) NOT NULL,
-    Status NVARCHAR(20) DEFAULT 'Available'
-        CHECK (Status IN ('Available','Maintenance','Closed')),
-    CONSTRAINT FK_Facility_Resort FOREIGN KEY (ResortID)
-        REFERENCES Resort(ResortID),
-    CONSTRAINT FK_Facility_Type FOREIGN KEY (FacilityTypeID)
-        REFERENCES FacilityType(FacilityTypeID)
-);
-
--- ==========================================================
--- SERVICE CATEGORY
--- ==========================================================
-CREATE TABLE ServiceCategory (
-    ServiceCategoryID INT IDENTITY PRIMARY KEY,
-    Code NVARCHAR(10) NOT NULL UNIQUE,
-    Name NVARCHAR(100) NOT NULL,
-    Description NVARCHAR(200),
-    Type NVARCHAR(50)
-);
-
--- ==========================================================
--- SERVICE ITEM
--- ==========================================================
-CREATE TABLE ServiceItem (
-    ServiceID INT IDENTITY PRIMARY KEY,
-    ServiceCategoryID INT NOT NULL,
     Name NVARCHAR(100) NOT NULL,
     Description NVARCHAR(300),
-    Status NVARCHAR(20) DEFAULT 'Available'
-        CHECK (Status IN ('Available','Unavailable')),
-    BaseCost DECIMAL(10,2) NOT NULL CHECK (BaseCost >= 0),
-    BaseCurrency NVARCHAR(10) NOT NULL,
-    Capacity INT CHECK (Capacity > 0),
-    CONSTRAINT FK_Service_Category FOREIGN KEY (ServiceCategoryID)
-        REFERENCES ServiceCategory(ServiceCategoryID)
+    Status NVARCHAR(20) CHECK (Status IN ('Available','Maintenance','Closed')),
+    FacilityTypeID INT NOT NULL,
+    ResortID INT NOT NULL,
+
+    CONSTRAINT FK_Facility_Type FOREIGN KEY (FacilityTypeID)
+        REFERENCES FacilityType(FacilityTypeID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    CONSTRAINT FK_Facility_Resort FOREIGN KEY (ResortID)
+        REFERENCES Resort(ResortID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
 );
 
--- ==========================================================
--- ADVERTISED SERVICE / PACKAGE
--- ==========================================================
-CREATE TABLE AdvertisedServicePackage (
-    AdvertisedID INT IDENTITY PRIMARY KEY,
-    ResortID INT NOT NULL,
+-- ----------------------------------------------------------
+-- SERVICE CATEGORY
+-- ----------------------------------------------------------
+CREATE TABLE ServiceCategory (
+    CategoryID INT IDENTITY PRIMARY KEY,
+    Name NVARCHAR(100) NOT NULL,
+    Description NVARCHAR(300),
+    TypeOfService NVARCHAR(100)
+);
+
+-- ----------------------------------------------------------
+-- SERVICE ITEM
+-- ----------------------------------------------------------
+CREATE TABLE ServiceItem (
+    ServiceID INT IDENTITY PRIMARY KEY,
+    Name NVARCHAR(100) NOT NULL,
+    Description NVARCHAR(300),
+    Restrictions NVARCHAR(300),
+    Status NVARCHAR(20) CHECK (Status IN ('Available','Unavailable')),
+    AvailableTimes NVARCHAR(200),
+    BaseCost DECIMAL(10,2) CHECK (BaseCost >= 0),
+    BaseCurrency NVARCHAR(10),
+    Capacity INT CHECK (Capacity > 0),
+    CategoryID INT NOT NULL,
+
+    CONSTRAINT FK_Service_Category FOREIGN KEY (CategoryID)
+        REFERENCES ServiceCategory(CategoryID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+);
+
+-- ----------------------------------------------------------
+-- EMPLOYEE
+-- ----------------------------------------------------------
+CREATE TABLE Employee (
+    EmployeeID INT IDENTITY PRIMARY KEY,
+    Name NVARCHAR(100) NOT NULL,
+    Role NVARCHAR(50),
+    Email NVARCHAR(100)
+);
+
+-- ----------------------------------------------------------
+-- ADVERTISED OFFER
+-- ----------------------------------------------------------
+CREATE TABLE AdvertisedOffer (
+    OfferID INT IDENTITY PRIMARY KEY,
     Name NVARCHAR(100) NOT NULL,
     Description NVARCHAR(500),
-    StartDate DATE NOT NULL,
-    EndDate DATE NOT NULL,
-    AdvertisedPrice DECIMAL(10,2) NOT NULL CHECK (AdvertisedPrice >= 0),
-    AdvertisedCurrency NVARCHAR(10) NOT NULL,
-    GracePeriodDays INT NOT NULL CHECK (GracePeriodDays >= 0),
-    Status NVARCHAR(20) DEFAULT 'Active'
-        CHECK (Status IN ('Active','Inactive')),
-    AuthorizedBy INT NOT NULL,
-    CONSTRAINT FK_Advertised_Resort FOREIGN KEY (ResortID)
-        REFERENCES Resort(ResortID),
-    CONSTRAINT FK_Advertised_Employee FOREIGN KEY (AuthorizedBy)
-        REFERENCES Employee(EmployeeID),
-    CONSTRAINT CK_DateRange CHECK (EndDate >= StartDate)
+    AdvertisedPrice DECIMAL(10,2) CHECK (AdvertisedPrice >= 0),
+    AdvertisedCurrency NVARCHAR(10),
+    StartDate DATE,
+    EndDate DATE,
+    Inclusions NVARCHAR(500),
+    Exclusions NVARCHAR(500),
+    Status NVARCHAR(20),
+    GracePeriod INT CHECK (GracePeriod >= 0)
 );
 
--- ==========================================================
--- PACKAGE CONTENT (M:N)
--- ==========================================================
-CREATE TABLE PackageService (
-    AdvertisedID INT NOT NULL,
-    ServiceID INT NOT NULL,
-    Quantity INT NOT NULL CHECK (Quantity > 0),
-    PRIMARY KEY (AdvertisedID, ServiceID),
-    FOREIGN KEY (AdvertisedID) REFERENCES AdvertisedServicePackage(AdvertisedID),
-    FOREIGN KEY (ServiceID) REFERENCES ServiceItem(ServiceID)
-);
-
--- ==========================================================
+-- ----------------------------------------------------------
 -- CUSTOMER
--- ==========================================================
+-- ----------------------------------------------------------
 CREATE TABLE Customer (
     CustomerID INT IDENTITY PRIMARY KEY,
-    FullName NVARCHAR(100) NOT NULL,
+    Name NVARCHAR(100) NOT NULL,
     Address NVARCHAR(200),
     Phone NVARCHAR(20),
-    Email NVARCHAR(100) UNIQUE
+    Email NVARCHAR(100)
 );
 
--- ==========================================================
+-- ----------------------------------------------------------
+-- GUEST
+-- ----------------------------------------------------------
+CREATE TABLE Guest (
+    GuestID INT IDENTITY PRIMARY KEY,
+    Name NVARCHAR(100) NOT NULL,
+    Address NVARCHAR(200),
+    Phone NVARCHAR(20),
+    Email NVARCHAR(100)
+);
+
+-- ----------------------------------------------------------
 -- RESERVATION
--- ==========================================================
+-- ----------------------------------------------------------
 CREATE TABLE Reservation (
     ReservationID INT IDENTITY PRIMARY KEY,
-    CustomerID INT NOT NULL,
     ReservationDate DATETIME DEFAULT GETDATE(),
-    TotalAmount DECIMAL(10,2) CHECK (TotalAmount >= 0),
-    DepositAmount DECIMAL(10,2) CHECK (DepositAmount >= 0),
-    Status NVARCHAR(20) DEFAULT 'Pending'
-        CHECK (Status IN ('Pending','Confirmed','Cancelled','Completed')),
-    FOREIGN KEY (CustomerID) REFERENCES Customer(CustomerID)
+    TotalAmount DECIMAL(10,2),
+    DepositAmount DECIMAL(10,2),
+    Status NVARCHAR(20)
 );
 
--- ==========================================================
--- RESERVATION DETAILS
--- ==========================================================
-CREATE TABLE ReservationDetail (
-    ReservationDetailID INT IDENTITY PRIMARY KEY,
-    ReservationID INT NOT NULL,
-    AdvertisedID INT NOT NULL,
-    Quantity INT NOT NULL CHECK (Quantity > 0),
+-- ----------------------------------------------------------
+-- BOOKING
+-- ----------------------------------------------------------
+CREATE TABLE Booking (
+    BookingID INT IDENTITY PRIMARY KEY,
     StartDate DATE NOT NULL,
     EndDate DATE NOT NULL,
-    FOREIGN KEY (ReservationID) REFERENCES Reservation(ReservationID),
-    FOREIGN KEY (AdvertisedID) REFERENCES AdvertisedServicePackage(AdvertisedID),
-    CHECK (EndDate >= StartDate)
-);
-
--- ==========================================================
--- FACILITY BOOKING
--- ==========================================================
-CREATE TABLE FacilityBooking (
-    FacilityBookingID INT IDENTITY PRIMARY KEY,
-    ReservationDetailID INT NOT NULL,
-    FacilityID INT NOT NULL,
-    StartDateTime DATETIME NOT NULL,
-    EndDateTime DATETIME NOT NULL,
-    FOREIGN KEY (ReservationDetailID)
-        REFERENCES ReservationDetail(ReservationDetailID),
-    FOREIGN KEY (FacilityID)
-        REFERENCES Facility(FacilityID),
-    CHECK (EndDateTime > StartDateTime)
-);
-
--- ==========================================================
--- CHARGES (Extra services used after check-in)
--- ==========================================================
-CREATE TABLE BookingCharge (
-    ChargeID INT IDENTITY PRIMARY KEY,
+    Quantity INT CHECK (Quantity > 0),
     ReservationID INT NOT NULL,
-    ServiceID INT NOT NULL,
-    ChargeAmount DECIMAL(10,2) NOT NULL CHECK (ChargeAmount >= 0),
-    ChargeDate DATETIME DEFAULT GETDATE(),
-    FOREIGN KEY (ReservationID) REFERENCES Reservation(ReservationID),
-    FOREIGN KEY (ServiceID) REFERENCES ServiceItem(ServiceID)
+    OfferID INT NOT NULL,
+
+    CONSTRAINT FK_Booking_Reservation FOREIGN KEY (ReservationID)
+        REFERENCES Reservation(ReservationID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    CONSTRAINT FK_Booking_Offer FOREIGN KEY (OfferID)
+        REFERENCES AdvertisedOffer(OfferID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
 );
 
--- ==========================================================
--- DISCOUNT
--- ==========================================================
-CREATE TABLE Discount (
-    DiscountID INT IDENTITY PRIMARY KEY,
-    ReservationID INT NOT NULL,
-    DiscountAmount DECIMAL(10,2) NOT NULL CHECK (DiscountAmount >= 0),
-    AuthorizedBy INT NOT NULL,
-    FOREIGN KEY (ReservationID) REFERENCES Reservation(ReservationID),
-    FOREIGN KEY (AuthorizedBy) REFERENCES Employee(EmployeeID)
-);
-
--- ==========================================================
+-- ----------------------------------------------------------
 -- PAYMENT
--- ==========================================================
+-- ----------------------------------------------------------
 CREATE TABLE Payment (
     PaymentID INT IDENTITY PRIMARY KEY,
-    ReservationID INT NOT NULL,
+    Amount DECIMAL(10,2),
     PaymentDate DATETIME DEFAULT GETDATE(),
-    Amount DECIMAL(10,2) NOT NULL CHECK (Amount > 0),
-    PaymentMethod NVARCHAR(20)
-        CHECK (PaymentMethod IN ('CreditCard','DebitCard','Cash','Online')),
-    FOREIGN KEY (ReservationID) REFERENCES Reservation(ReservationID)
+    PaymentMethod NVARCHAR(50),
+    Status NVARCHAR(50)
 );
 
--- ==========================================================
--- SAMPLE DATA (Meaningful & Sufficient)
--- ==========================================================
+-- ----------------------------------------------------------
+-- CHARGE
+-- ----------------------------------------------------------
+CREATE TABLE Charge (
+    ChargeID INT IDENTITY PRIMARY KEY,
+    Amount DECIMAL(10,2),
+    ChargeDate DATETIME DEFAULT GETDATE(),
+    Description NVARCHAR(300),
+    ChargeType NVARCHAR(50)
+);
 
-INSERT INTO Employee (FullName, Role, Email)
-VALUES
-('Alice Manager','Manager','alice@holidayfun.com'),
-('Bob Front','FrontOffice','bob@holidayfun.com'),
-('Helen Head','HeadOffice','headoffice@holidayfun.com');
+-- ----------------------------------------------------------
+-- DISCOUNT
+-- ----------------------------------------------------------
+CREATE TABLE Discount (
+    DiscountID INT IDENTITY PRIMARY KEY,
+    DiscountAmount DECIMAL(10,2),
+    Reason NVARCHAR(300)
+);
 
-INSERT INTO Resort (Name, Address, Country, Phone, Email, Description)
-VALUES
-('Resort Paradise','Sydney Beach','Australia','021234567','info@rp.com','Luxury Beach Resort'),
-('Mountain Escape','Melbourne Hills','Australia','039876543','info@me.com','Mountain Resort');
+/* ==========================================================
+   2. ASSOCIATIVE TABLES (M:N Relationships)
+========================================================== */
 
-INSERT INTO FacilityType (Name, Description, Capacity)
-VALUES
-('Standard Room','Basic room',2),
-('Conference Hall','Event Hall',100);
+-- ServiceItemFacility
+CREATE TABLE ServiceItemFacility (
+    ServiceID INT NOT NULL,
+    FacilityID INT NOT NULL,
+    PRIMARY KEY (ServiceID, FacilityID),
 
-INSERT INTO Facility (ResortID, FacilityTypeID, Name)
-VALUES
-(1,1,'Room 101'),
-(1,1,'Room 102'),
-(2,2,'Hall A');
+    FOREIGN KEY (ServiceID)
+        REFERENCES ServiceItem(ServiceID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
 
-INSERT INTO ServiceCategory (Code, Name)
-VALUES
-('ACC','Accommodation'),
-('FD','Food & Drink');
+    FOREIGN KEY (FacilityID)
+        REFERENCES Facility(FacilityID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+);
 
-INSERT INTO ServiceItem (ServiceCategoryID, Name, BaseCost, BaseCurrency, Capacity)
-VALUES
-(1,'Standard Room Night',150,'AUD',2),
-(2,'Buffet Breakfast',20,'AUD',50),
-(2,'Dinner Meal',35,'AUD',50);
+-- AdvertisedOfferServiceItem
+CREATE TABLE AdvertisedOfferServiceItem (
+    OfferID INT NOT NULL,
+    ServiceID INT NOT NULL,
+    PRIMARY KEY (OfferID, ServiceID),
 
-INSERT INTO AdvertisedServicePackage
-(ResortID, Name, StartDate, EndDate, AdvertisedPrice,
- AdvertisedCurrency, GracePeriodDays, AuthorizedBy)
-VALUES
-(1,'Half Board Package','2026-01-01','2026-12-31',250,'AUD',2,1);
+    FOREIGN KEY (OfferID)
+        REFERENCES AdvertisedOffer(OfferID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
 
-INSERT INTO PackageService VALUES (1,1,1);
-INSERT INTO PackageService VALUES (1,2,2);
+    FOREIGN KEY (ServiceID)
+        REFERENCES ServiceItem(ServiceID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+);
 
-INSERT INTO Customer (FullName, Email)
-VALUES
-('John Smith','john@email.com'),
-('Emma Brown','emma@email.com');
+-- Authorises
+CREATE TABLE Authorises (
+    EmployeeID INT NOT NULL,
+    OfferID INT NOT NULL,
+    PRIMARY KEY (EmployeeID, OfferID),
 
-INSERT INTO Reservation (CustomerID, TotalAmount, DepositAmount, Status)
-VALUES
-(1,500,125,'Confirmed'),
-(2,250,62.5,'Pending');
+    FOREIGN KEY (EmployeeID)
+        REFERENCES Employee(EmployeeID)
+        ON UPDATE CASCADE
+        ON DELETE NO ACTION,
+
+    FOREIGN KEY (OfferID)
+        REFERENCES AdvertisedOffer(OfferID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+);
+
+-- CustomerReservation
+CREATE TABLE CustomerReservation (
+    CustomerID INT NOT NULL,
+    ReservationID INT NOT NULL,
+    PRIMARY KEY (CustomerID, ReservationID),
+
+    FOREIGN KEY (CustomerID)
+        REFERENCES Customer(CustomerID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (ReservationID)
+        REFERENCES Reservation(ReservationID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+);
+
+-- BookingGuest
+CREATE TABLE BookingGuest (
+    BookingID INT NOT NULL,
+    GuestID INT NOT NULL,
+    PRIMARY KEY (BookingID, GuestID),
+
+    FOREIGN KEY (BookingID)
+        REFERENCES Booking(BookingID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (GuestID)
+        REFERENCES Guest(GuestID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+);
+
+-- BookingFacility
+CREATE TABLE BookingFacility (
+    BookingFacilityID INT IDENTITY PRIMARY KEY,
+    BookingID INT NOT NULL,
+    FacilityID INT NOT NULL,
+    StartDateTime DATETIME,
+    EndDateTime DATETIME,
+
+    FOREIGN KEY (BookingID)
+        REFERENCES Booking(BookingID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (FacilityID)
+        REFERENCES Facility(FacilityID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+);
+
+-- ReservationPayment
+CREATE TABLE ReservationPayment (
+    ReservationID INT NOT NULL,
+    PaymentID INT NOT NULL,
+    PRIMARY KEY (ReservationID, PaymentID),
+
+    FOREIGN KEY (ReservationID)
+        REFERENCES Reservation(ReservationID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (PaymentID)
+        REFERENCES Payment(PaymentID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+);
+
+-- BookingCharge
+CREATE TABLE BookingCharge (
+    BookingID INT NOT NULL,
+    ChargeID INT NOT NULL,
+    PRIMARY KEY (BookingID, ChargeID),
+
+    FOREIGN KEY (BookingID)
+        REFERENCES Booking(BookingID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (ChargeID)
+        REFERENCES Charge(ChargeID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+);
+
+-- ReservationDiscount
+CREATE TABLE ReservationDiscount (
+    ReservationID INT NOT NULL,
+    DiscountID INT NOT NULL,
+    EmployeeID INT NOT NULL,
+    PRIMARY KEY (ReservationID, DiscountID),
+
+    FOREIGN KEY (ReservationID)
+        REFERENCES Reservation(ReservationID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (DiscountID)
+        REFERENCES Discount(DiscountID)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (EmployeeID)
+        REFERENCES Employee(EmployeeID)
+        ON UPDATE CASCADE
+        ON DELETE NO ACTION
+);
